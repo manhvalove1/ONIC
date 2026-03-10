@@ -1,9 +1,11 @@
 """
 Трекер личных финансов — CustomTkinter
+Улучшенная версия
 """
 
 import customtkinter as ctk
 from datetime import datetime
+from tkinter import messagebox
 import json
 import os
 
@@ -14,11 +16,8 @@ DATA_FILE = "finance_data.json"
 def _data_path():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_FILE)
 
-def load_data():
-    path = _data_path()
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+
+def default_data():
     return {
         "transactions": [],
         "categories": [
@@ -37,10 +36,35 @@ def load_data():
     }
 
 
+def load_data():
+    path = _data_path()
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Подстраховка на случай отсутствующих ключей
+            base = default_data()
+            for key, value in base.items():
+                if key not in data:
+                    data[key] = value
+
+            return data
+        except (json.JSONDecodeError, OSError):
+            messagebox.showwarning(
+                "Ошибка файла",
+                "Файл данных повреждён или недоступен.\nБудут загружены данные по умолчанию."
+            )
+    return default_data()
+
+
 def save_data(data):
     path = _data_path()
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError:
+        messagebox.showerror("Ошибка", "Не удалось сохранить данные.")
 
 
 # ─── Цвета ───────────────────────────────────────────────
@@ -80,9 +104,12 @@ class FinanceApp(ctk.CTk):
         self.title("💰 Трекер личных финансов")
         self.geometry("1100x700")
         self.minsize(900, 600)
+
         self.data = load_data()
         self.colors = DARK if self.data["settings"]["theme"] == "dark" else LIGHT
         self.configure(fg_color=self.colors["bg"])
+
+        self.current_page = "dashboard"
 
         # Layout
         self.grid_columnconfigure(1, weight=1)
@@ -105,13 +132,15 @@ class FinanceApp(ctk.CTk):
         self.sidebar.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
-            self.sidebar, text="💰 Finance",
+            self.sidebar,
+            text="💰 Finance",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=c["green"],
         ).grid(row=0, column=0, padx=15, pady=15, sticky="w")
 
-        ctk.CTkFrame(self.sidebar, height=1, fg_color=c["border"]).grid(row=1, column=0, sticky="ew", padx=10, pady=5)
-        self.sidebar.grid_columnconfigure(0, weight=1)
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=c["border"]).grid(
+            row=1, column=0, sticky="ew", padx=10, pady=5
+        )
 
         buttons = [
             ("📊  Мои финансы", self.show_dashboard),
@@ -131,7 +160,9 @@ class FinanceApp(ctk.CTk):
 
         for i, (text, cmd) in enumerate(buttons):
             btn = ctk.CTkButton(
-                nav_frame, text=text, anchor="w",
+                nav_frame,
+                text=text,
+                anchor="w",
                 fg_color="transparent",
                 hover_color=c["border"],
                 text_color=c["fg"],
@@ -143,15 +174,22 @@ class FinanceApp(ctk.CTk):
             self.nav_buttons.append(btn)
 
         ctk.CTkButton(
-            self.sidebar, text="＋ Добавить доход",
-            fg_color=c["green"], hover_color=c["green_dark"],
-            text_color="#0d1a14", font=ctk.CTkFont(size=10, weight="bold"),
+            self.sidebar,
+            text="＋ Добавить доход",
+            fg_color=c["green"],
+            hover_color=c["green_dark"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(size=10, weight="bold"),
             command=lambda: self._add_transaction_dialog("income"),
         ).grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 5))
+
         ctk.CTkButton(
-            self.sidebar, text="＋ Добавить расход",
-            fg_color=c["card"], hover_color=c["border"],
-            text_color=c["green"], font=ctk.CTkFont(size=10),
+            self.sidebar,
+            text="＋ Добавить расход",
+            fg_color=c["card"],
+            hover_color=c["border"],
+            text_color=c["green"],
+            font=ctk.CTkFont(size=10),
             command=lambda: self._add_transaction_dialog("expense"),
         ).grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 15))
 
@@ -162,7 +200,8 @@ class FinanceApp(ctk.CTk):
     def _header(self, text):
         c = self.colors
         ctk.CTkLabel(
-            self.content, text=text,
+            self.content,
+            text=text,
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color=c["fg"],
         ).grid(row=0, column=0, sticky="w", padx=0, pady=(20, 15))
@@ -170,8 +209,11 @@ class FinanceApp(ctk.CTk):
     def _card(self, parent, **kwargs):
         c = self.colors
         return ctk.CTkFrame(
-            parent, fg_color=c["card"],
-            corner_radius=8, border_width=1, border_color=c["border"],
+            parent,
+            fg_color=c["card"],
+            corner_radius=8,
+            border_width=1,
+            border_color=c["border"],
             **kwargs
         )
 
@@ -180,8 +222,31 @@ class FinanceApp(ctk.CTk):
         exp = sum(t["amount"] for t in self.data["transactions"] if t["type"] == "expense")
         return inc, exp, inc - exp
 
+    def _sort_transactions(self):
+        def safe_date(tx):
+            try:
+                return datetime.strptime(tx.get("date", ""), "%Y-%m-%d")
+            except ValueError:
+                return datetime.min
+        self.data["transactions"].sort(key=safe_date, reverse=True)
+
+    def _refresh_after_action(self):
+        if self.current_page == "transactions":
+            self.show_transactions()
+        elif self.current_page == "categories":
+            self.show_categories()
+        elif self.current_page == "goals":
+            self.show_goals()
+        elif self.current_page == "analytics":
+            self.show_analytics()
+        elif self.current_page == "settings":
+            self.show_settings()
+        else:
+            self.show_dashboard()
+
     # ── 1. Мои финансы ──
     def show_dashboard(self):
+        self.current_page = "dashboard"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Мои финансы")
@@ -201,8 +266,20 @@ class FinanceApp(ctk.CTk):
             card = self._card(cards_frame)
             card.grid(row=0, column=i, padx=(0, 10), sticky="nsew")
             card.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(card, text=label, font=ctk.CTkFont(size=10), text_color=c["muted"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 2))
-            ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=18, weight="bold"), text_color=color).grid(row=1, column=0, sticky="w", padx=15, pady=(0, 12))
+
+            ctk.CTkLabel(
+                card,
+                text=label,
+                font=ctk.CTkFont(size=10),
+                text_color=c["muted"]
+            ).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 2))
+
+            ctk.CTkLabel(
+                card,
+                text=value,
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color=color
+            ).grid(row=1, column=0, sticky="w", padx=15, pady=(0, 12))
 
         recent_card = self._card(self.content)
         recent_card.grid(row=2, column=0, sticky="nsew", pady=(0, 20))
@@ -210,7 +287,12 @@ class FinanceApp(ctk.CTk):
         recent_card.grid_rowconfigure(1, weight=1)
         self.content.grid_rowconfigure(2, weight=1)
 
-        ctk.CTkLabel(recent_card, text="Последние операции", font=ctk.CTkFont(size=12, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
+        ctk.CTkLabel(
+            recent_card,
+            text="Последние операции",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=c["fg"]
+        ).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
 
         tree_frame = ctk.CTkScrollableFrame(recent_card, fg_color="transparent")
         tree_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
@@ -220,14 +302,22 @@ class FinanceApp(ctk.CTk):
             sign = "+" if t["type"] == "income" else "-"
             row = ctk.CTkFrame(tree_frame, fg_color="transparent")
             row.grid_columnconfigure(1, weight=1)
+
             ctk.CTkLabel(row, text=t["date"], text_color=c["muted"], width=100).grid(row=0, column=0, sticky="w", padx=5, pady=2)
             ctk.CTkLabel(row, text="Доход" if t["type"] == "income" else "Расход", text_color=c["fg"], width=80).grid(row=0, column=1, sticky="w", padx=5, pady=2)
             ctk.CTkLabel(row, text=t["category"], text_color=c["fg"], width=150).grid(row=0, column=2, sticky="w", padx=5, pady=2)
-            ctk.CTkLabel(row, text=f"{sign}{t['amount']:,.0f} {cur}", text_color=c["green"] if t["type"] == "income" else c["red"], width=120).grid(row=0, column=3, sticky="e", padx=5, pady=2)
+            ctk.CTkLabel(
+                row,
+                text=f"{sign}{t['amount']:,.0f} {cur}",
+                text_color=c["green"] if t["type"] == "income" else c["red"],
+                width=120
+            ).grid(row=0, column=3, sticky="e", padx=5, pady=2)
+
             row.grid(row=i, column=0, sticky="ew", pady=2)
 
     # ── 2. Транзакции ──
     def show_transactions(self):
+        self.current_page = "transactions"
         self._clear_content()
         self.content.grid_rowconfigure(2, weight=1)
         self._header("Транзакции")
@@ -236,14 +326,22 @@ class FinanceApp(ctk.CTk):
 
         btn_frame = ctk.CTkFrame(self.content, fg_color="transparent")
         btn_frame.grid(row=1, column=0, sticky="w", pady=(0, 10))
+
         ctk.CTkButton(
-            btn_frame, text="＋ Добавить доход",
-            fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(size=10, weight="bold"),
+            btn_frame,
+            text="＋ Добавить доход",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(size=10, weight="bold"),
             command=lambda: self._add_transaction_dialog("income"),
         ).pack(side="left", padx=(0, 8))
+
         ctk.CTkButton(
-            btn_frame, text="＋ Добавить расход",
-            fg_color=c["card"], text_color=c["green"], font=ctk.CTkFont(size=10),
+            btn_frame,
+            text="＋ Добавить расход",
+            fg_color=c["card"],
+            text_color=c["green"],
+            font=ctk.CTkFont(size=10),
             command=lambda: self._add_transaction_dialog("expense"),
         ).pack(side="left", padx=(0, 8))
 
@@ -256,29 +354,41 @@ class FinanceApp(ctk.CTk):
         trans_scroll.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         trans_scroll.grid_columnconfigure(0, weight=1)
 
-        self.trans_items = []
         for i, t in enumerate(self.data["transactions"]):
             sign = "+" if t["type"] == "income" else "-"
             row = ctk.CTkFrame(trans_scroll, fg_color="transparent")
             row.grid_columnconfigure(1, weight=1)
+
             ctk.CTkLabel(row, text=t["date"], text_color=c["muted"], width=100).grid(row=0, column=0, sticky="w", padx=5, pady=4)
             ctk.CTkLabel(row, text="Доход" if t["type"] == "income" else "Расход", text_color=c["fg"], width=80).grid(row=0, column=1, sticky="w", padx=5, pady=4)
             ctk.CTkLabel(row, text=t["category"], text_color=c["fg"], width=130).grid(row=0, column=2, sticky="w", padx=5, pady=4)
-            ctk.CTkLabel(row, text=f"{sign}{t['amount']:,.0f} {cur}", text_color=c["green"] if t["type"] == "income" else c["red"], width=120).grid(row=0, column=3, sticky="e", padx=5, pady=4)
+            ctk.CTkLabel(
+                row,
+                text=f"{sign}{t['amount']:,.0f} {cur}",
+                text_color=c["green"] if t["type"] == "income" else c["red"],
+                width=120
+            ).grid(row=0, column=3, sticky="e", padx=5, pady=4)
             ctk.CTkLabel(row, text=t.get("comment", ""), text_color=c["muted"], width=150).grid(row=0, column=4, sticky="w", padx=5, pady=4)
-            del_btn = ctk.CTkButton(row, text="🗑", width=32, fg_color="transparent", hover_color=c["red"], command=lambda idx=i: self._delete_transaction_at(idx))
-            del_btn.grid(row=0, column=5, padx=5, pady=4)
-            self.trans_items.append((row, t))
-            row.grid(row=i, column=0, sticky="ew", pady=2)
-        trans_scroll.grid_columnconfigure(0, weight=1)
 
-        self.trans_scroll = trans_scroll
-        self.trans_card = card
+            del_btn = ctk.CTkButton(
+                row,
+                text="🗑",
+                width=32,
+                fg_color="transparent",
+                hover_color=c["red"],
+                command=lambda idx=i: self._delete_transaction_at(idx)
+            )
+            del_btn.grid(row=0, column=5, padx=5, pady=4)
+
+            row.grid(row=i, column=0, sticky="ew", pady=2)
 
     def _delete_transaction_at(self, idx):
-        self.data["transactions"].pop(idx)
-        save_data(self.data)
-        self.show_transactions()
+        if 0 <= idx < len(self.data["transactions"]):
+            confirm = messagebox.askyesno("Удаление", "Удалить эту транзакцию?")
+            if confirm:
+                self.data["transactions"].pop(idx)
+                save_data(self.data)
+                self.show_transactions()
 
     def _add_transaction_dialog(self, tx_type):
         c = self.colors
@@ -289,8 +399,9 @@ class FinanceApp(ctk.CTk):
         win.resizable(False, False)
 
         cats = [cat["name"] for cat in self.data["categories"] if cat["type"] == tx_type]
+
         ctk.CTkLabel(win, text="Категория:", text_color=c["fg"]).pack(anchor="w", padx=20, pady=(20, 2))
-        cat_var = ctk.StringVar(value=cats[0] if cats else "")
+        cat_var = ctk.StringVar(value=cats[0] if cats else "Другое")
         cat_menu = ctk.CTkOptionMenu(win, variable=cat_var, values=cats if cats else ["Другое"])
         cat_menu.pack(fill="x", padx=20, pady=(0, 10))
 
@@ -308,27 +419,49 @@ class FinanceApp(ctk.CTk):
         comment_entry.pack(fill="x", padx=20, pady=(0, 15))
 
         def save():
+            # Проверка суммы
             try:
-                amt = float(amount_entry.get())
+                amt = float(amount_entry.get().replace(",", "."))
                 if amt <= 0:
                     raise ValueError
             except ValueError:
+                messagebox.showerror("Ошибка", "Введите корректную сумму больше 0.")
                 return
-            self.data["transactions"].insert(0, {
+
+            # Проверка даты
+            date_text = date_entry.get().strip()
+            try:
+                datetime.strptime(date_text, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("Ошибка", "Введите дату в формате ГГГГ-ММ-ДД.")
+                return
+
+            self.data["transactions"].append({
                 "type": tx_type,
                 "category": cat_var.get(),
                 "amount": amt,
-                "date": date_entry.get(),
-                "comment": comment_entry.get(),
+                "date": date_text,
+                "comment": comment_entry.get().strip(),
             })
+
+            self._sort_transactions()
             save_data(self.data)
             win.destroy()
-            self.show_dashboard()
+            messagebox.showinfo("Успешно", "Транзакция добавлена.")
+            self.show_transactions()
 
-        ctk.CTkButton(win, text="💾 Сохранить", fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"), command=save).pack(pady=(5, 20))
+        ctk.CTkButton(
+            win,
+            text="💾 Сохранить",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
+            command=save
+        ).pack(pady=(5, 20))
 
     # ── 3. Аналитика ──
     def show_analytics(self):
+        self.current_page = "analytics"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Аналитика")
@@ -346,7 +479,13 @@ class FinanceApp(ctk.CTk):
         card = self._card(self.content)
         card.grid(row=1, column=0, sticky="nsew", pady=(0, 15))
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(card, text="Расходы по категориям", font=ctk.CTkFont(size=13, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 10))
+
+        ctk.CTkLabel(
+            card,
+            text="Расходы по категориям",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=c["fg"]
+        ).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 10))
 
         if expenses:
             total_exp = sum(expenses.values())
@@ -355,6 +494,7 @@ class FinanceApp(ctk.CTk):
                 row = ctk.CTkFrame(card, fg_color="transparent")
                 row.grid(row=i + 1, column=0, sticky="ew", padx=15, pady=2)
                 row.grid_columnconfigure(1, weight=1)
+
                 ctk.CTkLabel(row, text=cat, text_color=c["fg"], width=150).grid(row=0, column=0, sticky="w")
                 progress = ctk.CTkProgressBar(row, width=200, progress_color=c["green"])
                 progress.set(pct / 100)
@@ -366,7 +506,13 @@ class FinanceApp(ctk.CTk):
         card2 = self._card(self.content)
         card2.grid(row=2, column=0, sticky="nsew", pady=(0, 20))
         card2.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(card2, text="Доходы по источникам", font=ctk.CTkFont(size=13, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 10))
+
+        ctk.CTkLabel(
+            card2,
+            text="Доходы по источникам",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=c["fg"]
+        ).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 10))
 
         if incomes:
             total_inc = sum(incomes.values())
@@ -375,6 +521,7 @@ class FinanceApp(ctk.CTk):
                 row = ctk.CTkFrame(card2, fg_color="transparent")
                 row.grid(row=i + 1, column=0, sticky="ew", padx=15, pady=2)
                 row.grid_columnconfigure(1, weight=1)
+
                 ctk.CTkLabel(row, text=cat, text_color=c["fg"], width=150).grid(row=0, column=0, sticky="w")
                 progress = ctk.CTkProgressBar(row, width=200, progress_color=c["green"])
                 progress.set(pct / 100)
@@ -385,6 +532,7 @@ class FinanceApp(ctk.CTk):
 
     # ── 4. Категории ──
     def show_categories(self):
+        self.current_page = "categories"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Категории")
@@ -392,12 +540,21 @@ class FinanceApp(ctk.CTk):
         cur = self.data["settings"]["currency"]
 
         ctk.CTkButton(
-            self.content, text="＋ Добавить категорию",
-            fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"),
+            self.content,
+            text="＋ Добавить категорию",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
             command=self._add_category_dialog,
         ).grid(row=1, column=0, sticky="w", pady=(0, 10))
 
-        ctk.CTkLabel(self.content, text="Расходы", font=ctk.CTkFont(size=12, weight="bold"), text_color=c["fg"]).grid(row=2, column=0, sticky="w", padx=0, pady=(5, 5))
+        ctk.CTkLabel(
+            self.content,
+            text="Расходы",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=c["fg"]
+        ).grid(row=2, column=0, sticky="w", padx=0, pady=(5, 5))
+
         exp_frame = ctk.CTkFrame(self.content, fg_color="transparent")
         exp_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         exp_frame.grid_columnconfigure((0, 1, 2), weight=1)
@@ -406,11 +563,22 @@ class FinanceApp(ctk.CTk):
         for i, cat in enumerate(exp_cats):
             card = self._card(exp_frame)
             card.grid(row=i // 3, column=i % 3, padx=(0, 10), pady=5, sticky="nsew")
-            spent = sum(t["amount"] for t in self.data["transactions"] if t["type"] == "expense" and t["category"] == cat["name"])
+            spent = sum(
+                t["amount"]
+                for t in self.data["transactions"]
+                if t["type"] == "expense" and t["category"] == cat["name"]
+            )
+
             ctk.CTkLabel(card, text=cat["name"], font=ctk.CTkFont(size=11, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
             ctk.CTkLabel(card, text=f"Потрачено: {spent:,.0f} {cur}", font=ctk.CTkFont(size=9), text_color=c["muted"]).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
 
-        ctk.CTkLabel(self.content, text="Доходы", font=ctk.CTkFont(size=12, weight="bold"), text_color=c["fg"]).grid(row=4, column=0, sticky="w", padx=0, pady=(10, 5))
+        ctk.CTkLabel(
+            self.content,
+            text="Доходы",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=c["fg"]
+        ).grid(row=4, column=0, sticky="w", padx=0, pady=(10, 5))
+
         inc_frame = ctk.CTkFrame(self.content, fg_color="transparent")
         inc_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
         inc_frame.grid_columnconfigure((0, 1, 2), weight=1)
@@ -419,7 +587,12 @@ class FinanceApp(ctk.CTk):
         for i, cat in enumerate(inc_cats):
             card = self._card(inc_frame)
             card.grid(row=0, column=i, padx=(0, 10), pady=5, sticky="nsew")
-            earned = sum(t["amount"] for t in self.data["transactions"] if t["type"] == "income" and t["category"] == cat["name"])
+            earned = sum(
+                t["amount"]
+                for t in self.data["transactions"]
+                if t["type"] == "income" and t["category"] == cat["name"]
+            )
+
             ctk.CTkLabel(card, text=cat["name"], font=ctk.CTkFont(size=11, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=12, pady=(10, 2))
             ctk.CTkLabel(card, text=f"Получено: {earned:,.0f} {cur}", font=ctk.CTkFont(size=9), text_color=c["green"]).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
 
@@ -435,6 +608,7 @@ class FinanceApp(ctk.CTk):
         type_var = ctk.StringVar(value="expense")
         type_frame = ctk.CTkFrame(win, fg_color="transparent")
         type_frame.pack(fill="x", padx=20, pady=(0, 10))
+
         ctk.CTkRadioButton(type_frame, text="Расход", variable=type_var, value="expense").pack(side="left", padx=(0, 15))
         ctk.CTkRadioButton(type_frame, text="Доход", variable=type_var, value="income").pack(side="left")
 
@@ -445,16 +619,35 @@ class FinanceApp(ctk.CTk):
         def save():
             name = name_entry.get().strip()
             if not name:
+                messagebox.showerror("Ошибка", "Введите название категории.")
                 return
+
+            duplicate = any(
+                cat["name"].lower() == name.lower() and cat["type"] == type_var.get()
+                for cat in self.data["categories"]
+            )
+            if duplicate:
+                messagebox.showerror("Ошибка", "Такая категория уже существует.")
+                return
+
             self.data["categories"].append({"name": name, "type": type_var.get()})
             save_data(self.data)
             win.destroy()
+            messagebox.showinfo("Успешно", "Категория добавлена.")
             self.show_categories()
 
-        ctk.CTkButton(win, text="💾 Сохранить", fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"), command=save).pack(pady=10)
+        ctk.CTkButton(
+            win,
+            text="💾 Сохранить",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
+            command=save
+        ).pack(pady=10)
 
     # ── 5. Цели ──
     def show_goals(self):
+        self.current_page = "goals"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Цели")
@@ -462,8 +655,11 @@ class FinanceApp(ctk.CTk):
         cur = self.data["settings"]["currency"]
 
         ctk.CTkButton(
-            self.content, text="＋ Создать цель",
-            fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"),
+            self.content,
+            text="＋ Создать цель",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
             command=self._add_goal_dialog,
         ).grid(row=1, column=0, sticky="w", pady=(0, 15))
 
@@ -475,36 +671,71 @@ class FinanceApp(ctk.CTk):
             card = self._card(goals_frame)
             card.grid(row=i // 3, column=i % 3, padx=(0, 10), pady=5, sticky="nsew")
             card.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(card, text=f"{goal.get('icon', '🎯')} {goal['name']}", font=ctk.CTkFont(size=12, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+
+            ctk.CTkLabel(
+                card,
+                text=f"{goal.get('icon', '🎯')} {goal['name']}",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color=c["fg"]
+            ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+
             pct = min(100, (goal["current"] / goal["target"] * 100)) if goal["target"] else 0
-            ctk.CTkLabel(card, text=f"{goal['current']:,.0f} / {goal['target']:,.0f} {cur}", font=ctk.CTkFont(size=11), text_color=c["fg"]).grid(row=1, column=0, sticky="w", padx=12, pady=2)
+
+            ctk.CTkLabel(
+                card,
+                text=f"{goal['current']:,.0f} / {goal['target']:,.0f} {cur}",
+                font=ctk.CTkFont(size=11),
+                text_color=c["fg"]
+            ).grid(row=1, column=0, sticky="w", padx=12, pady=2)
+
             progress = ctk.CTkProgressBar(card, progress_color=c["green"])
             progress.set(pct / 100)
             progress.grid(row=2, column=0, sticky="ew", padx=12, pady=5)
+
             color = c["green"] if pct >= 100 else (c["yellow"] if pct > 50 else c["red"])
-            ctk.CTkLabel(card, text=f"{pct:.0f}%", font=ctk.CTkFont(size=11, weight="bold"), text_color=color).grid(row=3, column=0, sticky="e", padx=12, pady=2)
+            ctk.CTkLabel(
+                card,
+                text=f"{pct:.0f}%",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=color
+            ).grid(row=3, column=0, sticky="e", padx=12, pady=2)
 
             add_frame = ctk.CTkFrame(card, fg_color="transparent")
             add_frame.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 10))
             add_frame.grid_columnconfigure(0, weight=1)
+
             amt_entry = ctk.CTkEntry(add_frame, fg_color=c["input_bg"], placeholder_text="Сумма", width=100)
             amt_entry.grid(row=0, column=0, padx=(0, 5))
 
             def contribute(g=goal, e=amt_entry):
                 try:
-                    val = float(e.get())
+                    val = float(e.get().replace(",", "."))
                     if val <= 0:
                         raise ValueError
                 except ValueError:
+                    messagebox.showerror("Ошибка", "Введите корректную сумму больше 0.")
                     return
+
                 g["current"] = g.get("current", 0) + val
                 save_data(self.data)
                 self.show_goals()
 
-            ctk.CTkButton(add_frame, text="+", fg_color=c["green"], text_color="#0d1a14", width=40, command=contribute).grid(row=0, column=1)
+            ctk.CTkButton(
+                add_frame,
+                text="+",
+                fg_color=c["green"],
+                text_color="#0d1a14",
+                width=40,
+                command=contribute
+            ).grid(row=0, column=1)
 
         if not self.data["goals"]:
-            ctk.CTkLabel(self.content, text="Нет целей. Создайте первую!", text_color=c["muted"], font=ctk.CTkFont(size=11)).grid(row=3, column=0, pady=30)
+            ctk.CTkLabel(
+                self.content,
+                text="Нет целей. Создайте первую!",
+                text_color=c["muted"],
+                font=ctk.CTkFont(size=11)
+            ).grid(row=3, column=0, pady=30)
 
     def _add_goal_dialog(self):
         c = self.colors
@@ -529,28 +760,41 @@ class FinanceApp(ctk.CTk):
 
         def save():
             name = name_entry.get().strip()
+            if not name:
+                messagebox.showerror("Ошибка", "Введите название цели.")
+                return
+
             try:
-                target = float(target_entry.get())
+                target = float(target_entry.get().replace(",", "."))
                 if target <= 0:
                     raise ValueError
             except ValueError:
+                messagebox.showerror("Ошибка", "Введите корректную целевую сумму больше 0.")
                 return
-            if not name:
-                return
+
             self.data["goals"].append({
                 "name": name,
                 "target": target,
                 "current": 0,
-                "icon": icon_entry.get() or "🎯",
+                "icon": icon_entry.get().strip() or "🎯",
             })
             save_data(self.data)
             win.destroy()
+            messagebox.showinfo("Успешно", "Цель создана.")
             self.show_goals()
 
-        ctk.CTkButton(win, text="💾 Создать", fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"), command=save).pack(pady=5)
+        ctk.CTkButton(
+            win,
+            text="💾 Создать",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
+            command=save
+        ).pack(pady=5)
 
     # ── 6. Настройки ──
     def show_settings(self):
+        self.current_page = "settings"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Настройки")
@@ -559,6 +803,7 @@ class FinanceApp(ctk.CTk):
         card = self._card(self.content)
         card.grid(row=1, column=0, sticky="ew", pady=(0, 15))
         card.grid_columnconfigure(0, weight=1)
+
         ctk.CTkLabel(card, text="Валюта", font=ctk.CTkFont(size=11, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
         cur_var = ctk.StringVar(value=self.data["settings"]["currency"])
         cur_menu = ctk.CTkOptionMenu(card, variable=cur_var, values=["KGS", "RUB", "USD", "EUR"])
@@ -567,8 +812,10 @@ class FinanceApp(ctk.CTk):
         card2 = self._card(self.content)
         card2.grid(row=2, column=0, sticky="ew", pady=(0, 15))
         card2.grid_columnconfigure(0, weight=1)
+
         ctk.CTkLabel(card2, text="Тема", font=ctk.CTkFont(size=11, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 5))
         theme_var = ctk.StringVar(value=self.data["settings"]["theme"])
+
         theme_frame = ctk.CTkFrame(card2, fg_color="transparent")
         theme_frame.grid(row=1, column=0, sticky="w", padx=15, pady=(0, 10))
         ctk.CTkRadioButton(theme_frame, text="🌙 Тёмная", variable=theme_var, value="dark").pack(side="left", padx=(0, 15))
@@ -584,39 +831,78 @@ class FinanceApp(ctk.CTk):
             self.data["settings"]["theme"] = theme_var.get()
             self.data["settings"]["notifications"] = notif_var.get()
             save_data(self.data)
+
             self.colors = DARK if theme_var.get() == "dark" else LIGHT
             ctk.set_appearance_mode("dark" if theme_var.get() == "dark" else "light")
             self.configure(fg_color=self.colors["bg"])
             self.sidebar.configure(fg_color=self.colors["sidebar"])
+
             for w in self.sidebar.winfo_children():
                 w.destroy()
+
             self._build_sidebar()
             self.show_settings()
+            messagebox.showinfo("Успешно", "Настройки сохранены.")
 
-        ctk.CTkButton(self.content, text="💾 Сохранить изменения", fg_color=c["green"], text_color="#0d1a14", font=ctk.CTkFont(weight="bold"), command=save_settings).grid(row=4, column=0, sticky="w", pady=10)
+        ctk.CTkButton(
+            self.content,
+            text="💾 Сохранить изменения",
+            fg_color=c["green"],
+            text_color="#0d1a14",
+            font=ctk.CTkFont(weight="bold"),
+            command=save_settings
+        ).grid(row=4, column=0, sticky="w", pady=10)
 
     # ── 7. Справка ──
     def show_help(self):
+        self.current_page = "help"
         self._clear_content()
         self.content.grid_rowconfigure(1, weight=1)
         self._header("Справка / Помощь")
         c = self.colors
+
         sections = [
-            ("❓ Как добавлять транзакции",
-             "Перейдите в раздел «Транзакции» и нажмите «Добавить доход» или «Добавить расход». Заполните категорию, сумму и дату, затем нажмите «Сохранить»."),
-            ("🏷️ Как создавать категории",
-             "В разделе «Категории» нажмите «Добавить категорию». Укажите название и тип (доход/расход)."),
-            ("🎯 Как ставить цели",
-             "В разделе «Цели» нажмите «Создать цель». Укажите название и целевую сумму. Пополняйте цель, вводя сумму и нажимая «+»."),
-            ("📈 Как смотреть аналитику",
-             "Раздел «Аналитика» показывает распределение расходов и доходов по категориям с процентами."),
+            (
+                "❓ Как добавлять транзакции",
+                "Перейдите в раздел «Транзакции» и нажмите «Добавить доход» или «Добавить расход». "
+                "Заполните категорию, сумму и дату, затем нажмите «Сохранить»."
+            ),
+            (
+                "🏷️ Как создавать категории",
+                "В разделе «Категории» нажмите «Добавить категорию». "
+                "Укажите название и тип (доход/расход)."
+            ),
+            (
+                "🎯 Как ставить цели",
+                "В разделе «Цели» нажмите «Создать цель». "
+                "Укажите название и целевую сумму. Пополняйте цель, вводя сумму и нажимая «+»."
+            ),
+            (
+                "📈 Как смотреть аналитику",
+                "Раздел «Аналитика» показывает распределение расходов и доходов по категориям с процентами."
+            ),
         ]
+
         for i, (title, text) in enumerate(sections):
             card = self._card(self.content)
             card.grid(row=i + 1, column=0, sticky="ew", pady=(0, 10))
             card.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=c["fg"]).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 4))
-            ctk.CTkLabel(card, text=text, font=ctk.CTkFont(size=10), text_color=c["muted"], justify="left").grid(row=1, column=0, sticky="w", padx=15, pady=(0, 12))
+
+            ctk.CTkLabel(
+                card,
+                text=title,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=c["fg"]
+            ).grid(row=0, column=0, sticky="w", padx=15, pady=(12, 4))
+
+            ctk.CTkLabel(
+                card,
+                text=text,
+                font=ctk.CTkFont(size=10),
+                text_color=c["muted"],
+                justify="left",
+                wraplength=800
+            ).grid(row=1, column=0, sticky="w", padx=15, pady=(0, 12))
 
 
 # ─── Запуск ──────────────────────────────────────────────
@@ -625,4 +911,3 @@ if __name__ == "__main__":
     ctk.set_appearance_mode("dark" if theme == "dark" else "light")
     app = FinanceApp()
     app.mainloop()
-
